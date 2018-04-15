@@ -13,10 +13,12 @@ public class FileSystemUtility {
 		long BPB_RsvdSecCnt;
 		long BPB_NumFATS;
 		long BPB_FATSz32;
+		long pwd_address;
 		boolean running = true;
 		
 		
-		Path diskPath = Paths.get("C:\\Users\\Avi\\Desktop\\OS-project-3\\OSHW3", "fat32.img");
+		
+		Path diskPath = Paths.get("C:\\Users\\yosef\\OS\\OSHomework3\\OSHW3", "fat32.img");
 		byte[] diskImage = Files.readAllBytes(diskPath);
 		
 		BPB_BytesPerSec = 0xFFFFL & ((diskImage[12] << 8) ^ diskImage[11]);
@@ -30,30 +32,35 @@ public class FileSystemUtility {
 		BPB_FATSz32 = temp1 + temp2 + temp3 + temp4;
 		
 		long FirstDataSector = BPB_RsvdSecCnt + BPB_NumFATS * BPB_FATSz32;
+		 
 		int N = 2;
 		long FirstSectorOfCluster = (((N - 2) * BPB_SecPerClus) + FirstDataSector) * BPB_BytesPerSec;
+		pwd_address = FirstSectorOfCluster;
 		System.out.println(FirstDataSector);
 		System.out.println(FirstSectorOfCluster);
 		System.out.println(diskImage[(int)FirstSectorOfCluster]);
 		
-		printRootDirectory(diskImage, FirstSectorOfCluster);
-		
+		ls(diskImage, FirstSectorOfCluster);
+		stat(diskImage, pwd_address, "FSINFO.TXT");
+/**		
 		while(running) {
 			System.out.print("> ");
 			Scanner scan = new Scanner(System.in);
 			String input = scan.nextLine().toLowerCase();
 			String[] arr = input.split(" ");
 			String command = arr[0];
+			
 			if(command.equals("info")) {
 				info(BPB_BytesPerSec, BPB_SecPerClus, BPB_RsvdSecCnt, BPB_NumFATS, BPB_FATSz32);
 			} else if(command.equals("stat")) {
 				stat();
 			} else if (command.equals("ls")) {
-				ls();
+				ls(diskImage, pwd_address);
 			} else if(command.equals("exit")) {
 				running = false;
 			}
 		}
+		*/
 		
 		//System.out.println(BPB_BytesPerSec);
 		//System.out.println(BPB_SecPerClus);
@@ -83,11 +90,47 @@ public class FileSystemUtility {
 			}
 		}	
 	}
-	public static void stat() {
-		
+	
+	public static void stat(byte[] disk, long root, String entry) {
+		StringBuilder str = new StringBuilder();
+		for(int i = 0; i < 11; i++) {
+			str.append((char)disk[(int)root + i]);
+		}
+		boolean foundEntry = false;
+		do{
+			for(int j = 0; j < 11; j++) {
+				str.setCharAt(j, (char)disk[(int)root + j]);
+			}
+			String word = str.toString();
+			word = word.replaceAll("\\s+","");
+			String entryNew = entry.replace(".","");
+			if(word.equals(entryNew)){
+				foundEntry = true;
+				System.out.println("we found " + entry);
+				
+			}
+			
+			root += 32;
+		}while(str.toString().trim().length() > 0);	
+		if(!foundEntry){
+			System.out.println("Could not find " + entry)
+		}
 	}
 	
-	public static void ls() {
+	public static void ls(byte[] disk, long root) {
+	
+		StringBuilder str = new StringBuilder();
+		for(int i = 0; i < 11; i++) {
+			str.append((char)disk[(int)root + i]);
+		}
+		while(str.toString().trim().length() > 0){
+			System.out.println(str);
+			root += 32;
+			for(int j = 0; j < 11; j++) {
+				str.setCharAt(j, (char)disk[(int)root + j]);
+			}
+		}	
+		
 		
 	}
 }
