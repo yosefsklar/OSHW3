@@ -16,9 +16,14 @@ public class FileSystemUtility {
 		long pwd_address;
 		boolean running = true;
 		
-		
-		
-		Path diskPath = Paths.get("C:\\Users\\Avi\\Desktop\\OS-project-3\\OSHW3", "fat32.img");
+		String path = "";
+		String fileName = "";
+		if(args.length > 0) {
+			path = args[0].substring(0, args[0].lastIndexOf('\\'));
+			fileName = args[0].substring(args[0].lastIndexOf('\\'));
+		} else {System.out.println("No File System Provided");}
+		Path diskPath = Paths.get(path, fileName);
+		//Path diskPath = Paths.get("C:\\Users\\Avi\\Desktop\\OS-project-3\\OSHW3\\", "fat32.img");
 		byte[] diskImage = Files.readAllBytes(diskPath);
 		
 		BPB_BytesPerSec = 0xFFFFL & ((diskImage[12] << 8) ^ diskImage[11]);
