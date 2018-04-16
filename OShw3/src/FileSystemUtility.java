@@ -18,7 +18,7 @@ public class FileSystemUtility {
 		
 		
 		
-		Path diskPath = Paths.get("C:\\Users\\yosef\\OS\\OSHomework3\\OSHW3", "fat32.img");
+		Path diskPath = Paths.get("C:\\Users\\Avi\\Desktop\\OS-project-3\\OSHW3", "fat32.img");
 		byte[] diskImage = Files.readAllBytes(diskPath);
 		
 		BPB_BytesPerSec = 0xFFFFL & ((diskImage[12] << 8) ^ diskImage[11]);
@@ -36,31 +36,32 @@ public class FileSystemUtility {
 		int N = 2;
 		long FirstSectorOfCluster = (((N - 2) * BPB_SecPerClus) + FirstDataSector) * BPB_BytesPerSec;
 		pwd_address = FirstSectorOfCluster;
-		System.out.println(FirstDataSector);
-		System.out.println(FirstSectorOfCluster);
-		System.out.println(diskImage[(int)FirstSectorOfCluster]);
+		//System.out.println(FirstDataSector);
+		//System.out.println(FirstSectorOfCluster);
+		//System.out.println(diskImage[(int)FirstSectorOfCluster]);
 		
-		ls(diskImage, FirstSectorOfCluster);
-		stat(diskImage, pwd_address, "FSINFO.TXT");
-/**		
+		//ls(diskImage, FirstSectorOfCluster);
+		//stat(diskImage, pwd_address, "FSINFO.TXT");
+		
 		while(running) {
 			System.out.print("> ");
 			Scanner scan = new Scanner(System.in);
-			String input = scan.nextLine().toLowerCase();
+			String input = scan.nextLine();
 			String[] arr = input.split(" ");
 			String command = arr[0];
 			
 			if(command.equals("info")) {
 				info(BPB_BytesPerSec, BPB_SecPerClus, BPB_RsvdSecCnt, BPB_NumFATS, BPB_FATSz32);
 			} else if(command.equals("stat")) {
-				stat();
+				String file = arr[1];
+				stat(diskImage, pwd_address, file);
 			} else if (command.equals("ls")) {
 				ls(diskImage, pwd_address);
 			} else if(command.equals("exit")) {
 				running = false;
 			}
 		}
-		*/
+		
 		
 		//System.out.println(BPB_BytesPerSec);
 		//System.out.println(BPB_SecPerClus);
@@ -92,6 +93,7 @@ public class FileSystemUtility {
 	}
 	
 	public static void stat(byte[] disk, long root, String entry) {
+		System.out.println("Entry: " + entry);
 		StringBuilder str = new StringBuilder();
 		for(int i = 0; i < 11; i++) {
 			str.append((char)disk[(int)root + i]);
@@ -106,14 +108,51 @@ public class FileSystemUtility {
 			String entryNew = entry.replace(".","");
 			if(word.equals(entryNew)){
 				foundEntry = true;
-				System.out.println("we found " + entry);
+				//System.out.println("we found " + entry);
+				//Just going to do it this way and we can figure out why this large shifting and masking isn't working
+				long temp1 = 0xFFFFFFFF & (disk[(int)root + 31] << 24);
+				long temp2 = 0xFFFFFF & (disk[(int)root + 30] << 16);
+				long temp3 = 0xFFFF & (disk[(int)root + 29] << 8);
+				long temp4 = 0xFF & (disk[(int)root + 28]);
+				long size = temp1 ^ temp2 ^ temp3 ^ temp4;
+				
+				//Now the attributes
+				StringBuilder str2 = new StringBuilder();
+				byte attribute_byte = disk[(int)root + 11];
+				if((attribute_byte & 0x01) != 0) {
+					str2.append("ATTR_READ_ONLY ");
+				}
+				if((attribute_byte & 0x02) != 0) {
+					str2.append("ATTR_HIDDEN ");
+				}
+				if((attribute_byte & 0x04) != 0) {
+					str2.append("ATTR_SYSTEM ");
+				}
+				if((attribute_byte & 0x08) != 0) {
+					str2.append("ATTR_VOLUME_ID ");
+				}
+				if((attribute_byte & 0x10) != 0) {
+					str2.append("ATTR_IRECTORY ");
+				}
+				if((attribute_byte & 0x20) != 0) {
+					str2.append("ATTR_ARCHIVE");
+				}
+				
+				//Now next cluster number. bytes 27, 26. String.format formats to keep the print in hex.
+				StringBuilder str3 = new StringBuilder();
+				str3.append(String.format("%02X", disk[(int)root + 27]));
+				str3.append(String.format("%02X", disk[(int)root + 26]));
+				
+				System.out.println("Size is " + size);
+				System.out.println("Attributes: " + str2.toString());
+				System.out.println("Next cluster number is: " + str3.toString());
 				
 			}
 			
 			root += 32;
 		}while(str.toString().trim().length() > 0);	
 		if(!foundEntry){
-			System.out.println("Could not find " + entry)
+			System.out.println("Could not find " + entry);
 		}
 	}
 	
@@ -131,6 +170,6 @@ public class FileSystemUtility {
 			}
 		}	
 		
-		
+	
 	}
 }
