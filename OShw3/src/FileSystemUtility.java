@@ -168,8 +168,16 @@ public class FileSystemUtility {
 			str.append((char)disk[(int)root + i]);
 		}
 		while(str.toString().trim().length() > 0){
-			System.out.println(str);
-			root += 32;
+			if(!str.toString().substring(8,9).equals(" ")){
+				str.insert(8, '.');
+			}
+			else{ 
+				str.insert(8, " ");
+			}
+			String fileName = str.toString().replaceAll(" ", "");
+			System.out.println(fileName);
+			str.deleteCharAt(8);
+			root += 64;
 			for(int j = 0; j < 11; j++) {
 				str.setCharAt(j, (char)disk[(int)root + j]);
 			}
