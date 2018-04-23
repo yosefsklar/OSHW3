@@ -13,8 +13,9 @@ public class FileSystemUtility {
 		long BPB_RsvdSecCnt;
 		long BPB_NumFATS;
 		long BPB_FATSz32;
-		long pwd_address;
+		long pwdAddress;
 		boolean running = true;
+		
 		
 		String path = "";
 		String fileName = "";
@@ -40,16 +41,14 @@ public class FileSystemUtility {
 		 
 		int N = 2;
 		long FirstSectorOfCluster = (((N - 2) * BPB_SecPerClus) + FirstDataSector) * BPB_BytesPerSec;
-		pwd_address = FirstSectorOfCluster;
-		//System.out.println(FirstDataSector);
-		//System.out.println(FirstSectorOfCluster);
-		//System.out.println(diskImage[(int)FirstSectorOfCluster]);
+		pwdAddress = FirstSectorOfCluster;
+		int beginningOfData = (int) (FirstSectorOfCluster - (3 *512));
+		String pwd = "root\\";
+		long fatTable = BPB_RsvdSecCnt * 512;
 		
-		//ls(diskImage, FirstSectorOfCluster);
-		//stat(diskImage, pwd_address, "FSINFO.TXT");
-		
+
 		while(running) {
-			System.out.print("> ");
+			System.out.print(pwd + "> ");
 			Scanner scan = new Scanner(System.in);
 			String input = scan.nextLine();
 			String[] arr = input.split(" ");
@@ -59,20 +58,26 @@ public class FileSystemUtility {
 				info(BPB_BytesPerSec, BPB_SecPerClus, BPB_RsvdSecCnt, BPB_NumFATS, BPB_FATSz32);
 			} else if(command.equals("stat")) {
 				String file = arr[1];
-				stat(diskImage, pwd_address, file);
+				stat(diskImage, pwdAddress, file);
 			} else if (command.equals("ls")) {
-				ls(diskImage, pwd_address);
+				ls(diskImage, pwdAddress);
 			} else if(command.equals("exit")) {
 				running = false;
+			} else if(command.equals("cd")) {
+				String file = arr[1];
+				long temp = pwdAddress;
+				pwdAddress = FirstSectorOfCluster + (512* cd(diskImage, pwdAddress, fatTable, file));
+				if(temp != pwdAddress) {
+					pwd += file + "\\";
+				}
+			} else if(command.equals("read")) {
+				String file = arr[1];
+				int offset = Integer.parseInt(arr[2]);
+				int amount = Integer.parseInt(arr[3]);
+				read(diskImage, pwdAddress, offset, amount, fatTable, beginningOfData,file);
 			}
+			
 		}
-		
-		
-		//System.out.println(BPB_BytesPerSec);
-		//System.out.println(BPB_SecPerClus);
-		//System.out.println(BPB_RsvdSecCnt);
-		//System.out.println(BPB_NumFATS);
-		//System.out.println(BPB_FATSz32);
 		
 	}
 	
@@ -83,6 +88,7 @@ public class FileSystemUtility {
 		System.out.println("BPB_NumFATS is " + numFATS);
 		System.out.println("BPB_FATSz32 is " + fatsz32);	
 	}
+	
 	public static void printRootDirectory(byte[] disk, long root) {
 		StringBuilder str = new StringBuilder();
 		for(int i = 0; i < 11; i++) {
@@ -137,7 +143,7 @@ public class FileSystemUtility {
 					str2.append("ATTR_VOLUME_ID ");
 				}
 				if((attribute_byte & 0x10) != 0) {
-					str2.append("ATTR_IRECTORY ");
+					str2.append("ATTR_DIRECTORY ");
 				}
 				if((attribute_byte & 0x20) != 0) {
 					str2.append("ATTR_ARCHIVE");
@@ -161,11 +167,11 @@ public class FileSystemUtility {
 		}
 	}
 	
-	public static void ls(byte[] disk, long root) {
+	public static void ls(byte[] disk, long pwd) {
 	
 		StringBuilder str = new StringBuilder();
 		for(int i = 0; i < 11; i++) {
-			str.append((char)disk[(int)root + i]);
+			str.append((char)disk[(int)pwd + i]);
 		}
 		while(str.toString().trim().length() > 0){
 			if(!str.toString().substring(8,9).equals(" ")){
@@ -177,12 +183,113 @@ public class FileSystemUtility {
 			String fileName = str.toString().replaceAll(" ", "");
 			System.out.println(fileName);
 			str.deleteCharAt(8);
-			root += 64;
+			pwd += 64;
 			for(int j = 0; j < 11; j++) {
-				str.setCharAt(j, (char)disk[(int)root + j]);
+				str.setCharAt(j, (char)disk[(int)pwd + j]);
 			}
 		}	
-		
 	
+	}
+	
+	public static long cd(byte[] disk, long pwd, long fatAddress, String directoryName) {
+		long pwdInit = pwd;
+		StringBuilder str = new StringBuilder();
+		boolean found = false;
+		for(int i = 0; i < 11; i++) {
+			str.append((char)disk[(int)pwd + i]);
+		}
+		do {
+			for(int j = 0; j < 11; j++) {
+				str.setCharAt(j, (char)disk[(int)pwd + j]);
+			}
+			if(!str.toString().substring(8,9).equals(" ")){
+				str.insert(8, '.');
+			}
+			else{ 
+				str.insert(8, " ");
+			}
+			String fileName = str.toString().replaceAll(" ", "");
+			
+			if(fileName.equals(directoryName)) {
+				found = true;
+				byte attribute_byte = disk[(int)pwd + 11];
+				if((attribute_byte & 0x10) != 0) {
+					long clusterHigh = 0xFFff & ((disk[(int)pwd + 21] << 8) ^ (disk[(int)pwd + 20]));
+					long clusterLow  = 0xFFFF & ((disk[(int)pwd + 27] << 8) ^ (disk[(int)pwd + 26]));
+					long clusterNumber = 0xFFFFFFFF &((clusterHigh << 16) ^ clusterLow); 
+					int fatIndex = (int)fatAddress + (int)(clusterNumber * 4);
+					long temp1 = 0xFFFFFFFF & (disk[(int)fatIndex +3] << 24);
+					long temp2 = 0xFFFFFF & (disk[(int)fatIndex + 2] << 16);
+					long temp3 = 0xFFFF & (disk[(int)fatIndex + 1] << 8);
+					long temp4 = 0xFF & (disk[(int)fatIndex + 0]);
+					long dirAddress = temp1 ^ temp2 ^ temp3 ^ temp4;
+					return dirAddress;
+					
+					
+				} else {
+					return pwdInit;
+				}
+			}
+			
+			str.deleteCharAt(8);
+			pwd += 64;
+		} while (str.toString().trim().length() > 0);
+		
+		if(!found) {
+			System.out.println("Error: does not exist");
+			return pwdInit;
+		}
+		return pwdInit;
+	}
+	
+	public static void read(byte[] disk, long pwd, int offset, int amount, long fatAddress, int rootAddress, String file) {
+		StringBuilder str = new StringBuilder();
+		boolean found = false;
+		for(int i = 0; i < 11; i++) {
+			str.append((char)disk[(int)pwd + i]);
+		}
+		do {
+			for(int j = 0; j < 11; j++) {
+				str.setCharAt(j, (char)disk[(int)pwd + j]);
+			}
+			if(!str.toString().substring(8,9).equals(" ")){
+				str.insert(8, '.');
+			}
+			else{ 
+				str.insert(8, " ");
+			}
+			String fileName = str.toString().replaceAll(" ", "");
+			
+			if(fileName.equals(file)) {
+				found = true;
+				byte attribute_byte = disk[(int)pwd + 11];
+				if((attribute_byte & 0x10) == 0) {
+					long clusterHigh = 0xFFFF & ((disk[(int)pwd + 21] << 8) ^ (disk[(int)pwd + 20]));
+					long clusterLow  = 0xFFFF & ((disk[(int)pwd + 27] << 8) ^ (disk[(int)pwd + 26]));
+					long clusterNumber = 0xFFFFFFFF &((clusterHigh << 16) ^ clusterLow); 
+					int fatIndex = (int)fatAddress + (int)(clusterNumber * 4);
+					long temp1 = 0xFFFFFFFF & (disk[(int)fatIndex +3] << 24);
+					long temp2 = 0xFFFFFF & (disk[(int)fatIndex + 2] << 16);
+					long temp3 = 0xFFFF & (disk[(int)fatIndex + 1] << 8);
+					long temp4 = 0xFF & (disk[(int)fatIndex + 0]);
+					long fileAddress = temp1 ^ temp2 ^ temp3 ^ temp4;
+					int beginningOfFile = (int)rootAddress + (int)fileAddress*512;
+					StringBuilder str2 = new StringBuilder();
+					for(int i = 0; i < amount; i++) {
+						str2.append((char)disk[beginningOfFile + i]);
+					}
+					System.out.println(str2.toString());
+				}
+				
+			}
+			
+			str.deleteCharAt(8);
+			pwd += 64;
+		} while (str.toString().trim().length() > 0);
+		
+		if(!found) {
+			System.out.println("Error: file not preset");
+		}
+		
 	}
 }
