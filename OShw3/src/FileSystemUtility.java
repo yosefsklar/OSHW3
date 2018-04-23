@@ -42,7 +42,7 @@ public class FileSystemUtility {
 		int N = 2;
 		long FirstSectorOfCluster = (((N - 2) * BPB_SecPerClus) + FirstDataSector) * BPB_BytesPerSec;
 		pwdAddress = FirstSectorOfCluster;
-		int beginningOfData = (int) (FirstSectorOfCluster - (3 *512));
+		int beginningOfData = (int) (FirstSectorOfCluster - (2 *512));
 		String pwd = "root\\";
 		long fatTable = BPB_RsvdSecCnt * 512;
 		
@@ -60,13 +60,14 @@ public class FileSystemUtility {
 				String file = arr[1];
 				stat(diskImage, pwdAddress, file);
 			} else if (command.equals("ls")) {
-				ls(diskImage, pwdAddress);
+				ls(diskImage, pwdAddress, fatTable, beginningOfData);
 			} else if(command.equals("exit")) {
 				running = false;
 			} else if(command.equals("cd")) {
 				String file = arr[1];
 				long temp = pwdAddress;
-				pwdAddress = FirstSectorOfCluster + (512* cd(diskImage, pwdAddress, fatTable, file));
+				pwdAddress = beginningOfData + (512* cd(diskImage, pwdAddress, fatTable,beginningOfData, file));
+				System.out.println(pwdAddress);
 				if(temp != pwdAddress) {
 					pwd += file + "\\";
 				}
@@ -167,12 +168,15 @@ public class FileSystemUtility {
 		}
 	}
 	
-	public static void ls(byte[] disk, long pwd) {
+	public static void ls(byte[] disk, long pwd, long fatAddress, long rootAddress) {
 	
 		StringBuilder str = new StringBuilder();
 		for(int i = 0; i < 11; i++) {
 			str.append((char)disk[(int)pwd + i]);
 		}
+		long clusterHigh = 0xFFff & ((disk[(int)pwd + 21] << 8) ^ (disk[(int)pwd + 20]));
+		long clusterLow  = 0xFFFF & ((disk[(int)pwd + 27] << 8) ^ (disk[(int)pwd + 26]));
+		long clusterNumber = 0xFFFFFFFF &((clusterHigh << 16) ^ clusterLow); 
 		while(str.toString().trim().length() > 0){
 			if(!str.toString().substring(8,9).equals(" ")){
 				str.insert(8, '.');
@@ -184,6 +188,18 @@ public class FileSystemUtility {
 			System.out.println(fileName);
 			str.deleteCharAt(8);
 			pwd += 64;
+			if (pwd % 512 == 0) {
+				
+				
+				int fatIndex = (int)fatAddress + (int)(clusterNumber * 4);
+				long temp1 = 0xFFFFFFFF & (disk[(int)fatIndex +3] << 24);
+				long temp2 = 0xFFFFFF & (disk[(int)fatIndex + 2] << 16);
+				long temp3 = 0xFFFF & (disk[(int)fatIndex + 1] << 8);
+				long temp4 = 0xFF & (disk[(int)fatIndex + 0]);
+				clusterNumber = temp1 ^ temp2 ^ temp3 ^ temp4;
+				System.out.println(clusterNumber);
+				pwd = (int)rootAddress + (int)clusterNumber*512;
+			}
 			for(int j = 0; j < 11; j++) {
 				str.setCharAt(j, (char)disk[(int)pwd + j]);
 			}
@@ -191,7 +207,7 @@ public class FileSystemUtility {
 	
 	}
 	
-	public static long cd(byte[] disk, long pwd, long fatAddress, String directoryName) {
+	public static long cd(byte[] disk, long pwd, long fatAddress, long rootAddress, String directoryName) {
 		long pwdInit = pwd;
 		StringBuilder str = new StringBuilder();
 		boolean found = false;
@@ -209,21 +225,17 @@ public class FileSystemUtility {
 				str.insert(8, " ");
 			}
 			String fileName = str.toString().replaceAll(" ", "");
-			
+			long clusterNumber = 0; 
 			if(fileName.equals(directoryName)) {
 				found = true;
 				byte attribute_byte = disk[(int)pwd + 11];
 				if((attribute_byte & 0x10) != 0) {
 					long clusterHigh = 0xFFff & ((disk[(int)pwd + 21] << 8) ^ (disk[(int)pwd + 20]));
 					long clusterLow  = 0xFFFF & ((disk[(int)pwd + 27] << 8) ^ (disk[(int)pwd + 26]));
-					long clusterNumber = 0xFFFFFFFF &((clusterHigh << 16) ^ clusterLow); 
-					int fatIndex = (int)fatAddress + (int)(clusterNumber * 4);
-					long temp1 = 0xFFFFFFFF & (disk[(int)fatIndex +3] << 24);
-					long temp2 = 0xFFFFFF & (disk[(int)fatIndex + 2] << 16);
-					long temp3 = 0xFFFF & (disk[(int)fatIndex + 1] << 8);
-					long temp4 = 0xFF & (disk[(int)fatIndex + 0]);
-					long dirAddress = temp1 ^ temp2 ^ temp3 ^ temp4;
-					return dirAddress;
+					clusterNumber = 0xFFFFFFFF &((clusterHigh << 16) ^ clusterLow); 
+					
+					System.out.println(clusterNumber);
+					return clusterNumber;
 					
 					
 				} else {
@@ -232,7 +244,17 @@ public class FileSystemUtility {
 			}
 			
 			str.deleteCharAt(8);
-			pwd += 64;
+			pwd += 32;
+			if (pwd % 512 == 0) {
+				int fatIndex = (int)fatAddress + (int)(clusterNumber * 4);
+				long temp1 = 0xFFFFFFFF & (disk[(int)fatIndex +3] << 24);
+				long temp2 = 0xFFFFFF & (disk[(int)fatIndex + 2] << 16);
+				long temp3 = 0xFFFF & (disk[(int)fatIndex + 1] << 8);
+				long temp4 = 0xFF & (disk[(int)fatIndex + 0]);
+				clusterNumber = temp1 ^ temp2 ^ temp3 ^ temp4;
+				pwd = (int)rootAddress + (int)clusterNumber*512;
+			}
+			
 		} while (str.toString().trim().length() > 0);
 		
 		if(!found) {
@@ -266,20 +288,43 @@ public class FileSystemUtility {
 				if((attribute_byte & 0x10) == 0) {
 					long clusterHigh = 0xFFFF & ((disk[(int)pwd + 21] << 8) ^ (disk[(int)pwd + 20]));
 					long clusterLow  = 0xFFFF & ((disk[(int)pwd + 27] << 8) ^ (disk[(int)pwd + 26]));
-					long clusterNumber = 0xFFFFFFFF &((clusterHigh << 16) ^ clusterLow); 
-					int fatIndex = (int)fatAddress + (int)(clusterNumber * 4);
-					long temp1 = 0xFFFFFFFF & (disk[(int)fatIndex +3] << 24);
-					long temp2 = 0xFFFFFF & (disk[(int)fatIndex + 2] << 16);
-					long temp3 = 0xFFFF & (disk[(int)fatIndex + 1] << 8);
-					long temp4 = 0xFF & (disk[(int)fatIndex + 0]);
-					long fileAddress = temp1 ^ temp2 ^ temp3 ^ temp4;
-					int beginningOfFile = (int)rootAddress + (int)fileAddress*512;
+					long clusterNumber = 0xFFFFFFFF &((clusterHigh << 16) ^ clusterLow);
+					int beginningOfFile = (int)rootAddress + (int)clusterNumber*512;
+					
 					StringBuilder str2 = new StringBuilder();
-					for(int i = 0; i < amount; i++) {
-						str2.append((char)disk[beginningOfFile + i]);
+					
+					while(offset > 512) {
+						int fatIndex = (int)fatAddress + (int)(clusterNumber * 4);
+						long temp1 = 0xFFFFFFFF & (disk[(int)fatIndex +3] << 24);
+						long temp2 = 0xFFFFFF & (disk[(int)fatIndex + 2] << 16);
+						long temp3 = 0xFFFF & (disk[(int)fatIndex + 1] << 8);
+						long temp4 = 0xFF & (disk[(int)fatIndex + 0]);
+						clusterNumber = temp1 ^ temp2 ^ temp3 ^ temp4;
+						
+						offset -= 512;
+					}
+					
+					beginningOfFile = (int)rootAddress + (int)clusterNumber*512;
+					
+					for(int counter = offset; counter < amount + offset; counter++) {
+						
+						if (counter % 512 == 0) {
+							
+							int fatIndex = (int)fatAddress + (int)(clusterNumber * 4);
+							long temp1 = 0xFFFFFFFF & (disk[(int)fatIndex +3] << 24);
+							long temp2 = 0xFFFFFF & (disk[(int)fatIndex + 2] << 16);
+							long temp3 = 0xFFFF & (disk[(int)fatIndex + 1] << 8);
+							long temp4 = 0xFF & (disk[(int)fatIndex + 0]);
+							clusterNumber = temp1 ^ temp2 ^ temp3 ^ temp4;
+							beginningOfFile = (int)rootAddress + (int)clusterNumber*512;
+							
+							counter -= 512;
+							amount -= 512;
+						}
+						str2.append((char)disk[beginningOfFile + counter]);
 					}
 					System.out.println(str2.toString());
-				}
+				} else {System.out.println("Error: cannot read directories");}
 				
 			}
 			
