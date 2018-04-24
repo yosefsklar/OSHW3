@@ -60,13 +60,20 @@ public class FileSystemUtility {
 				String file = arr[1];
 				stat(diskImage, pwdAddress, file);
 			} else if (command.equals("ls")) {
-				ls(diskImage, pwdAddress, fatTable, beginningOfData);
+				if(arr.length > 1){
+					String file = arr[1];
+					long lsAddress = cd(diskImage, pwdAddress, fatTable,beginningOfData, file);
+					ls(diskImage, lsAddress, fatTable, beginningOfData);
+				}
+				else{
+					ls(diskImage, pwdAddress, fatTable, beginningOfData);
+				}
 			} else if(command.equals("exit")) {
 				running = false;
 			} else if(command.equals("cd")) {
 				String file = arr[1];
 				long temp = pwdAddress;
-				pwdAddress = beginningOfData + (512* cd(diskImage, pwdAddress, fatTable,beginningOfData, file));
+				pwdAddress = cd(diskImage, pwdAddress, fatTable,beginningOfData, file);
 				System.out.println(pwdAddress);
 				if(temp != pwdAddress) {
 					pwd += file + "\\";
@@ -197,7 +204,6 @@ public class FileSystemUtility {
 				long temp3 = 0xFFFF & (disk[(int)fatIndex + 1] << 8);
 				long temp4 = 0xFF & (disk[(int)fatIndex + 0]);
 				clusterNumber = temp1 ^ temp2 ^ temp3 ^ temp4;
-				System.out.println(clusterNumber);
 				pwd = (int)rootAddress + (int)clusterNumber*512;
 			}
 			for(int j = 0; j < 11; j++) {
@@ -213,6 +219,9 @@ public class FileSystemUtility {
 		boolean found = false;
 		for(int i = 0; i < 11; i++) {
 			str.append((char)disk[(int)pwd + i]);
+		}
+		if(str.toString().trim().equals(".")){
+			return pwdInit;
 		}
 		do {
 			for(int j = 0; j < 11; j++) {
@@ -235,14 +244,14 @@ public class FileSystemUtility {
 					clusterNumber = 0xFFFFFFFF &((clusterHigh << 16) ^ clusterLow); 
 					
 					System.out.println(clusterNumber);
-					return clusterNumber;
+					return rootAddress + (512 * clusterNumber);
 					
 					
 				} else {
-					return pwdInit;
+					System.out.println("Cannot cd into a file");
+					return pwdInit ;
 				}
 			}
-			
 			str.deleteCharAt(8);
 			pwd += 32;
 			if (pwd % 512 == 0) {
