@@ -3,6 +3,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Scanner;
+import java.util.Stack;
 
 public class FileSystemUtility {
 
@@ -15,7 +16,7 @@ public class FileSystemUtility {
 		long BPB_FATSz32;
 		long pwdAddress;
 		boolean running = true;
-		
+		Stack<Integer> stack = new Stack<Integer>();
 		
 		String path = "";
 		String fileName = "";
@@ -45,7 +46,7 @@ public class FileSystemUtility {
 		int beginningOfData = (int) (FirstSectorOfCluster - (2 *512));
 		String pwd = "root\\";
 		long fatTable = BPB_RsvdSecCnt * 512;
-		
+		stack.push((int)pwdAddress);
 
 		while(running) {
 			System.out.print(pwd + "> ");
@@ -61,9 +62,23 @@ public class FileSystemUtility {
 				stat(diskImage, pwdAddress, file);
 			} else if (command.equals("ls")) {
 				if(arr.length > 1){
-					String file = arr[1];
-					long lsAddress = cd(diskImage, pwdAddress, fatTable,beginningOfData, file);
-					ls(diskImage, lsAddress, fatTable, beginningOfData);
+					if(arr[1].equals("..")) {
+						if(stack.size() == 1) {
+							System.out.println("Error: already in root directory");
+							
+						} else {
+							Integer temp = stack.pop();
+							Integer tempPwdAddress = stack.peek();
+							ls(diskImage, (long)tempPwdAddress, fatTable, (long)beginningOfData);
+						
+							stack.push(temp);
+						}
+					}
+					else {
+						String file = arr[1];
+						long lsAddress = cd(diskImage, pwdAddress, fatTable,beginningOfData, file);
+						ls(diskImage, lsAddress, fatTable, beginningOfData);
+					}
 				}
 				else{
 					ls(diskImage, pwdAddress, fatTable, beginningOfData);
@@ -72,17 +87,32 @@ public class FileSystemUtility {
 				running = false;
 			} else if(command.equals("cd")) {
 				String file = arr[1];
-				long temp = pwdAddress;
-				pwdAddress = cd(diskImage, pwdAddress, fatTable,beginningOfData, file);
-				System.out.println(pwdAddress);
-				if(temp != pwdAddress) {
-					pwd += file + "\\";
+				if(file.equals("..")){
+					if(stack.size() == 1) {
+						System.out.println("Error: already in root directory");
+					} 
+					else {
+						stack.pop();
+						pwdAddress = stack.peek();
+						pwd = pwd.substring(0, pwd.lastIndexOf('\\'));
+						pwd = pwd.substring(0, pwd.lastIndexOf('\\') + 1);
+					}
+				}
+				else {
+					long temp = pwdAddress;
+					pwdAddress = cd(diskImage, pwdAddress, fatTable,beginningOfData, file);
+					if(temp != pwdAddress) {
+						pwd += file + "\\";
+					}
+					stack.push((int) pwdAddress);
 				}
 			} else if(command.equals("read")) {
 				String file = arr[1];
 				int offset = Integer.parseInt(arr[2]);
 				int amount = Integer.parseInt(arr[3]);
 				read(diskImage, pwdAddress, offset, amount, fatTable, beginningOfData,file);
+			} else if(command.equals("volume")) {
+				volume(diskImage);
 			}
 			
 		}
@@ -241,9 +271,7 @@ public class FileSystemUtility {
 				if((attribute_byte & 0x10) != 0) {
 					long clusterHigh = 0xFFff & ((disk[(int)pwd + 21] << 8) ^ (disk[(int)pwd + 20]));
 					long clusterLow  = 0xFFFF & ((disk[(int)pwd + 27] << 8) ^ (disk[(int)pwd + 26]));
-					clusterNumber = 0xFFFFFFFF &((clusterHigh << 16) ^ clusterLow); 
-					
-					System.out.println(clusterNumber);
+					clusterNumber = 0xFFFFFFFF &((clusterHigh << 16) ^ clusterLow); 					
 					return rootAddress + (512 * clusterNumber);
 					
 					
@@ -345,5 +373,12 @@ public class FileSystemUtility {
 			System.out.println("Error: file not preset");
 		}
 		
+	}
+	public static void volume(byte[] disk) {
+		StringBuilder str = new StringBuilder();
+		for(int i = 0; i < 11; i++) {
+			str.append((char)disk[71 + i]);
+		}
+		System.out.println(str.toString());
 	}
 }
