@@ -242,10 +242,7 @@ public class FileSystemUtility {
 					long clusterHigh = 0xFFff & ((disk[(int)pwd + 21] << 8) ^ (disk[(int)pwd + 20]));
 					long clusterLow  = 0xFFFF & ((disk[(int)pwd + 27] << 8) ^ (disk[(int)pwd + 26]));
 					clusterNumber = 0xFFFFFFFF &((clusterHigh << 16) ^ clusterLow); 
-					
-					System.out.println(clusterNumber);
 					return rootAddress + (512 * clusterNumber);
-					
 					
 				} else {
 					System.out.println("Cannot cd into a file");
