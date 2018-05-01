@@ -3,6 +3,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Scanner;
+import java.util.Stack;
 
 public class FileSystemUtility {
 
@@ -15,7 +16,7 @@ public class FileSystemUtility {
 		long BPB_FATSz32;
 		long pwdAddress;
 		boolean running = true;
-		
+		Stack<Integer> stack = new Stack<Integer>();
 		
 		String path = "";
 		String fileName = "";
@@ -45,7 +46,7 @@ public class FileSystemUtility {
 		int beginningOfData = (int) (FirstSectorOfCluster - (2 *512));
 		String pwd = "root\\";
 		long fatTable = BPB_RsvdSecCnt * 512;
-		
+		stack.push((int)pwdAddress);
 
 		while(running) {
 			System.out.print(pwd + "> ");
@@ -58,31 +59,60 @@ public class FileSystemUtility {
 				info(BPB_BytesPerSec, BPB_SecPerClus, BPB_RsvdSecCnt, BPB_NumFATS, BPB_FATSz32);
 			} else if(command.equals("stat")) {
 				String file = arr[1];
-				stat(diskImage, pwdAddress, file);
+				stat(diskImage, pwdAddress, file, fatTable, (long)beginningOfData);
 			} else if (command.equals("ls")) {
 				if(arr.length > 1){
-					String file = arr[1];
-					long lsAddress = cd(diskImage, pwdAddress, fatTable,beginningOfData, file);
-					ls(diskImage, lsAddress, fatTable, beginningOfData);
+					if(arr[1].equals("..")) {
+						if(stack.size() == 1) {
+							System.out.println("Error: already in root directory");
+							
+						} else {
+							Integer temp = stack.pop();
+							Integer tempPwdAddress = stack.peek();
+							ls(diskImage, (long)tempPwdAddress, fatTable, (long)beginningOfData, FirstSectorOfCluster);
+						
+							stack.push(temp);
+						}
+					}
+					else {
+						String file = arr[1];
+						long lsAddress = cd(diskImage, pwdAddress, fatTable,beginningOfData, file, FirstSectorOfCluster);
+						ls(diskImage, lsAddress, fatTable, beginningOfData, FirstSectorOfCluster);
+					}
 				}
 				else{
-					ls(diskImage, pwdAddress, fatTable, beginningOfData);
+					ls(diskImage, pwdAddress, fatTable, beginningOfData, FirstSectorOfCluster);
 				}
 			} else if(command.equals("exit")) {
 				running = false;
 			} else if(command.equals("cd")) {
 				String file = arr[1];
-				long temp = pwdAddress;
-				pwdAddress = cd(diskImage, pwdAddress, fatTable,beginningOfData, file);
-				System.out.println(pwdAddress);
-				if(temp != pwdAddress) {
-					pwd += file + "\\";
+				if(file.equals("..")){
+					if(stack.size() == 1) {
+						System.out.println("Error: already in root directory");
+					} 
+					else {
+						stack.pop();
+						pwdAddress = stack.peek();
+						pwd = pwd.substring(0, pwd.lastIndexOf('\\'));
+						pwd = pwd.substring(0, pwd.lastIndexOf('\\') + 1);
+					}
+				}
+				else {
+					long temp = pwdAddress;
+					pwdAddress = cd(diskImage, pwdAddress, fatTable,beginningOfData, file, FirstSectorOfCluster);
+					if(temp != pwdAddress) {
+						pwd += file + "\\";
+					}
+					stack.push((int) pwdAddress);
 				}
 			} else if(command.equals("read")) {
 				String file = arr[1];
 				int offset = Integer.parseInt(arr[2]);
 				int amount = Integer.parseInt(arr[3]);
 				read(diskImage, pwdAddress, offset, amount, fatTable, beginningOfData,file);
+			} else if(command.equals("volume")) {
+				volume(diskImage);
 			}
 			
 		}
@@ -111,13 +141,17 @@ public class FileSystemUtility {
 		}	
 	}
 	
-	public static void stat(byte[] disk, long root, String entry) {
+	public static void stat(byte[] disk, long root, String entry, long fatAddress, long rootAddress) {
 		System.out.println("Entry: " + entry);
 		StringBuilder str = new StringBuilder();
 		for(int i = 0; i < 11; i++) {
 			str.append((char)disk[(int)root + i]);
 		}
 		boolean foundEntry = false;
+
+		long clusterHigh = 0xFFff & ((disk[(int)root + 21 ] << 8) ^ (disk[(int)root + 20 ]));
+		long clusterLow  = 0xFFFF & ((disk[(int)root + 27 ] << 8) ^ (disk[(int)root + 26 ]));
+		long clusterNumber = 0xFFFFFFFF &((clusterHigh << 16) ^ clusterLow); 
 		do{
 			for(int j = 0; j < 11; j++) {
 				str.setCharAt(j, (char)disk[(int)root + j]);
@@ -134,7 +168,7 @@ public class FileSystemUtility {
 				long temp3 = 0xFFFF & (disk[(int)root + 29] << 8);
 				long temp4 = 0xFF & (disk[(int)root + 28]);
 				long size = temp1 ^ temp2 ^ temp3 ^ temp4;
-				
+
 				//Now the attributes
 				StringBuilder str2 = new StringBuilder();
 				byte attribute_byte = disk[(int)root + 11];
@@ -156,33 +190,46 @@ public class FileSystemUtility {
 				if((attribute_byte & 0x20) != 0) {
 					str2.append("ATTR_ARCHIVE");
 				}
-				
+
 				//Now next cluster number. bytes 27, 26. String.format formats to keep the print in hex.
 				StringBuilder str3 = new StringBuilder();
 				str3.append(String.format("%02X", disk[(int)root + 27]));
 				str3.append(String.format("%02X", disk[(int)root + 26]));
-				
+
 				System.out.println("Size is " + size);
 				System.out.println("Attributes: " + str2.toString());
 				System.out.println("Next cluster number is: " + str3.toString());
-				
+
 			}
-			
+
 			root += 32;
+			if (root % 512 == 0) {
+
+
+				int fatIndex = (int)fatAddress + (int)(clusterNumber * 4);
+				long temp1 = 0xFFFFFFFF & (disk[(int)fatIndex +3] << 24);
+				long temp2 = 0xFFFFFF & (disk[(int)fatIndex + 2] << 16);
+				long temp3 = 0xFFFF & (disk[(int)fatIndex + 1] << 8);
+				long temp4 = 0xFF & (disk[(int)fatIndex + 0]);
+				clusterNumber = temp1 ^ temp2 ^ temp3 ^ temp4;
+				root = (int)rootAddress + (int)clusterNumber*512;
+			}
 		}while(str.toString().trim().length() > 0);	
 		if(!foundEntry){
 			System.out.println("Could not find " + entry);
 		}
 	}
 	
-	public static void ls(byte[] disk, long pwd, long fatAddress, long rootAddress) {
-	
+	public static void ls(byte[] disk, long pwd, long fatAddress, long rootAddress, long FirstSectorOfCluster) {
+		if(pwd == FirstSectorOfCluster){
+			pwd +=32;
+		}
 		StringBuilder str = new StringBuilder();
 		for(int i = 0; i < 11; i++) {
-			str.append((char)disk[(int)pwd + i]);
+			str.append((char)disk[(int)pwd + 32 + i]);
 		}
-		long clusterHigh = 0xFFff & ((disk[(int)pwd + 21] << 8) ^ (disk[(int)pwd + 20]));
-		long clusterLow  = 0xFFFF & ((disk[(int)pwd + 27] << 8) ^ (disk[(int)pwd + 26]));
+		long clusterHigh = 0xFFff & ((disk[(int)pwd + 21 ] << 8) ^ (disk[(int)pwd + 20 ]));
+		long clusterLow  = 0xFFFF & ((disk[(int)pwd + 27 ] << 8) ^ (disk[(int)pwd + 26 ]));
 		long clusterNumber = 0xFFFFFFFF &((clusterHigh << 16) ^ clusterLow); 
 		while(str.toString().trim().length() > 0){
 			if(!str.toString().substring(8,9).equals(" ")){
@@ -207,20 +254,19 @@ public class FileSystemUtility {
 				pwd = (int)rootAddress + (int)clusterNumber*512;
 			}
 			for(int j = 0; j < 11; j++) {
-				str.setCharAt(j, (char)disk[(int)pwd + j]);
+				str.setCharAt(j, (char)disk[(int)pwd + 32 + j]);
 			}
 		}	
-	
 	}
 	
-	public static long cd(byte[] disk, long pwd, long fatAddress, long rootAddress, String directoryName) {
+	public static long cd(byte[] disk, long pwd, long fatAddress, long rootAddress, String directoryName, long FirstSectorOfCluster) {
 		long pwdInit = pwd;
 		StringBuilder str = new StringBuilder();
 		boolean found = false;
 		for(int i = 0; i < 11; i++) {
 			str.append((char)disk[(int)pwd + i]);
 		}
-		if(str.toString().trim().equals(".")){
+		if(directoryName.toString().trim().equals(".")){
 			return pwdInit;
 		}
 		do {
@@ -239,9 +285,11 @@ public class FileSystemUtility {
 				found = true;
 				byte attribute_byte = disk[(int)pwd + 11];
 				if((attribute_byte & 0x10) != 0) {
-					long clusterHigh = 0xFFff & ((disk[(int)pwd + 21] << 8) ^ (disk[(int)pwd + 20]));
-					long clusterLow  = 0xFFFF & ((disk[(int)pwd + 27] << 8) ^ (disk[(int)pwd + 26]));
+					long clusterHigh = 0xFFff & ((disk[(int)pwd + 21 ] << 8) ^ (disk[(int)pwd + 20]));
+					long clusterLow  = 0xFFFF & ((disk[(int)pwd + 27 ] << 8) ^ (disk[(int)pwd + 26]));
+
 					clusterNumber = 0xFFFFFFFF &((clusterHigh << 16) ^ clusterLow); 
+
 					return rootAddress + (512 * clusterNumber);
 					
 				} else {
@@ -259,8 +307,7 @@ public class FileSystemUtility {
 				long temp4 = 0xFF & (disk[(int)fatIndex + 0]);
 				clusterNumber = temp1 ^ temp2 ^ temp3 ^ temp4;
 				pwd = (int)rootAddress + (int)clusterNumber*512;
-			}
-			
+			}	
 		} while (str.toString().trim().length() > 0);
 		
 		if(!found) {
@@ -343,4 +390,77 @@ public class FileSystemUtility {
 		}
 		
 	}
+	public static void volume(byte[] disk) {
+		StringBuilder str = new StringBuilder();
+		for(int i = 0; i < 11; i++) {
+			str.append((char)disk[71 + i]);
+		}
+		System.out.println(str.toString());
+	}
 }
+/*
+public static long cd(byte[] disk, long pwd, long fatAddress, long rootAddress, String directoryName, long FirstSectorOfCluster) {
+	int specialRoot = 0;
+	if(pwd == FirstSectorOfCluster){
+		pwd += 32;
+		specialRoot = 32;
+	}
+	long pwdInit = pwd;
+	StringBuilder str = new StringBuilder();
+	boolean found = false;
+	for(int i = 0; i < 11; i++) {
+		str.append((char)disk[(int)pwd + 32 + i]);
+	}
+	if(str.toString().trim().equals(".")){
+		return pwdInit;
+	}
+	do {
+		for(int j = 0; j < 11; j++) {
+			str.setCharAt(j, (char)disk[(int)pwd + 32 + j]);
+		}
+		if(!str.toString().substring(8,9).equals(" ")){
+			str.insert(8, '.');
+		}
+		else{ 
+			str.insert(8, " ");
+		}
+		String fileName = str.toString().replaceAll(" ", "");
+		long clusterNumber = 0; 
+		if(fileName.equals(directoryName)) {
+			found = true;
+			byte attribute_byte = disk[(int)pwd + 32 + 11];
+			if((attribute_byte & 0x10) != 0) {
+				long clusterHigh = 0xFFff & ((disk[(int)pwd + 21 + specialRoot] << 8) ^ (disk[(int)pwd + 20 + specialRoot]));
+				long clusterLow  = 0xFFFF & ((disk[(int)pwd + 27 + specialRoot] << 8) ^ (disk[(int)pwd + 26 + specialRoot]));
+
+				clusterNumber = 0xFFFFFFFF &((clusterHigh << 16) ^ clusterLow); 
+
+				return rootAddress + (512 * clusterNumber);
+				
+			} else {
+				System.out.println("Cannot cd into a file");
+				return pwdInit ;
+			}
+		}
+		str.deleteCharAt(8);
+		if (pwd % 512 == 0) {
+			int fatIndex = (int)fatAddress + (int)(clusterNumber * 4);
+			long temp1 = 0xFFFFFFFF & (disk[(int)fatIndex +3] << 24);
+			long temp2 = 0xFFFFFF & (disk[(int)fatIndex + 2] << 16);
+			long temp3 = 0xFFFF & (disk[(int)fatIndex + 1] << 8);
+			long temp4 = 0xFF & (disk[(int)fatIndex + 0]);
+			clusterNumber = temp1 ^ temp2 ^ temp3 ^ temp4;
+			pwd = (int)rootAddress + (int)clusterNumber*512;
+		}
+		pwd += 32;
+
+		
+	} while (str.toString().trim().length() > 0);
+	
+	if(!found) {
+		System.out.println("Error: does not exist");
+		return pwdInit;
+	}
+	return pwdInit;
+}
+*/
