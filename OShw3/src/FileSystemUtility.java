@@ -2,6 +2,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Scanner;
 import java.util.Stack;
 
@@ -47,6 +48,8 @@ public class FileSystemUtility {
 		String pwd = "root\\";
 		long fatTable = BPB_RsvdSecCnt * 512;
 		stack.push((int)pwdAddress);
+		System.out.println(getNumberOfFreeClusters(diskImage, fatTable, beginningOfData));
+		System.out.println(getFreeClusters(diskImage, fatTable, beginningOfData, 3));
 
 		while(running) {
 			System.out.print(pwd + "> ");
@@ -400,4 +403,56 @@ public class FileSystemUtility {
 		}
 		System.out.println(str.toString());
 	}
+
+	
+	public static int getNumberOfFreeClusters(byte[] disk, long fatAddress, long beginningOfData){
+		int counter = 0;
+		
+		for(int i = 4; i < 16144; i++) {
+			
+			int byteNum = i*4;
+			
+			long temp1 = 0xFFFFFFFF & (disk[(int)fatAddress + byteNum + 3] << 24);
+			long temp2 = 0xFFFFFF & (disk[(int)fatAddress + byteNum + 2] << 16);
+			long temp3 = 0xFFFF & (disk[(int)fatAddress + byteNum + 1] << 8);
+			long temp4 = 0xFF & (disk[(int)fatAddress + byteNum + 0]);
+			long clusterNumber = temp1 ^ temp2 ^ temp3 ^ temp4;
+			
+			if(clusterNumber == 0) {
+				counter++;
+			}
+		}
+		
+		return counter;
+	}
+	
+	public static ArrayList<Long> getFreeClusters(byte[] disk, long fatAddress, long beginningOfData, int num){
+		
+		ArrayList<Long> addresses = new ArrayList<Long>();
+		if(num == 0) return addresses;
+		int counter = 0;
+		
+		for(int i = 4; i < 16144; i++) {
+			
+			int byteNum = i*4;
+			
+			long temp1 = 0xFFFFFFFF & (disk[(int)fatAddress + byteNum + 3] << 24);
+			long temp2 = 0xFFFFFF & (disk[(int)fatAddress + byteNum + 2] << 16);
+			long temp3 = 0xFFFF & (disk[(int)fatAddress + byteNum + 1] << 8);
+			long temp4 = 0xFF & (disk[(int)fatAddress + byteNum + 0]);
+			long clusterNumber = temp1 ^ temp2 ^ temp3 ^ temp4;
+			
+			if(clusterNumber == 0) {
+				long address = beginningOfData + i*512;
+				addresses.add(address);
+				counter++;
+				if(counter == num) {
+					break;
+				}
+			}
+		}
+		return addresses;
+	}
+	
 }
+
