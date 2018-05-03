@@ -51,6 +51,9 @@ public class FileSystemUtility {
 		System.out.println(getNumberOfFreeClusters(diskImage, fatTable, beginningOfData));
 		System.out.println(getFreeClusters(diskImage, fatTable, beginningOfData, 3));
 
+		//test
+		byte test[] = getNewFileEntry(diskImage,fatTable, (long) beginningOfData, "MYTEST.TXT", 2000);
+		
 		while(running) {
 			System.out.print(pwd + "> ");
 			Scanner scan = new Scanner(System.in);
@@ -427,21 +430,21 @@ public class FileSystemUtility {
 	}
 	
 	public static ArrayList<Long> getFreeClusters(byte[] disk, long fatAddress, long beginningOfData, int num){
-		
+
 		ArrayList<Long> addresses = new ArrayList<Long>();
 		if(num == 0) return addresses;
 		int counter = 0;
-		
+
 		for(int i = 4; i < 16144; i++) {
-			
+
 			int byteNum = i*4;
-			
+
 			long temp1 = 0xFFFFFFFF & (disk[(int)fatAddress + byteNum + 3] << 24);
 			long temp2 = 0xFFFFFF & (disk[(int)fatAddress + byteNum + 2] << 16);
 			long temp3 = 0xFFFF & (disk[(int)fatAddress + byteNum + 1] << 8);
 			long temp4 = 0xFF & (disk[(int)fatAddress + byteNum + 0]);
 			long clusterNumber = temp1 ^ temp2 ^ temp3 ^ temp4;
-			
+
 			if(clusterNumber == 0) {
 				long address = beginningOfData + i*512;
 				addresses.add(address);
@@ -453,6 +456,108 @@ public class FileSystemUtility {
 		}
 		return addresses;
 	}
+	//This method return the entry in a 32 byte array, which must be copied to the correct spot in the disk array. 
+	public static byte[] getNewFileEntry(byte[] disk, long fatAddress, long beginningOfData, String filename, long fileSize){
+		
+		byte fileEntry[] = new byte[32];
+		int periodOffset = 0;
+		for(int i = 0; i < filename.length(); i++ ){
+			if(filename.charAt(i) == '.'){
+				periodOffset = 7 - i;
+				continue;
+			}
+			fileEntry[i + periodOffset] = (byte) filename.charAt(i);
+		}
+		fileEntry[11] = 32;// account for the 20 that all files seem to have in the hex editor as their attributes
+
+		//get number of clusters needed for file
+		int numberOfClusters = (int) Math.ceil((double)fileSize / 512);
+		//set high and low cluster bits
+		ArrayList<Long> freeClusters = getFreeClusters(disk, fatAddress, beginningOfData, numberOfClusters);
+
+		long clusterNumber = (freeClusters.get(0) - beginningOfData) / 512 ;
+		System.out.println("Cluster nymber value: " + clusterNumber);
+		System.out.println("Cluster Number: " + Long.toHexString(clusterNumber));
+		byte highFirstByte = (byte)((clusterNumber & 0xFF000000) >> 24);
+		byte highSecondByte = (byte)((clusterNumber & 0x00FF0000) >> 16);
+		System.out.println("highFirstByte: " + String.format("%02x", highFirstByte));
+		System.out.println("highSecondByte: " + String.format("%02x", highSecondByte));
+		
+		fileEntry[21] = highFirstByte;
+		fileEntry[22] = highSecondByte;
+		
+		byte lowFirstByte = (byte) (clusterNumber);
+		
+		byte lowSecondByte = (byte) ((clusterNumber & 0x0000FF00) >> 8);
+		System.out.println("lowFirstByte: " + String.format("%02x",lowFirstByte));
+		System.out.println("lowSecondByte: " + String.format("%02x", lowSecondByte));
+		fileEntry[26] = lowFirstByte;
+		fileEntry[27] = lowSecondByte;
+		
+		//reverse the file size into little endian 
+		byte fileSizeByteFour = (byte)((fileSize & 0xFF000000) >> 24);
+		byte fileSizeByteThree = (byte)((fileSize & 0x00FF0000) >> 16);
+		byte fileSizeByteTwo = (byte) ((fileSize & 0x0000FF00) >> 8);
+		byte fileSizeByteOne = (byte) (fileSize);
+		fileEntry[28] = fileSizeByteOne;
+		fileEntry[29] = fileSizeByteTwo;
+		fileEntry[30] = fileSizeByteThree;
+		fileEntry[31] = fileSizeByteFour;
+		
+		for(int i = 0; i < fileEntry.length ; i++){
+			System.out.print(String.format("%02x",fileEntry[i]) + " ");
+			if( (i + 1) % 4 == 0){
+				System.out.println();
+			}
+		}
+		
+		return fileEntry;
+ 	}
 	
+	public static void fillNewFileWithText(byte[] disk, long fatAddress, long beginningOfData, ArrayList<Long> addressList, long fileSize){
+		long bytesRemaining = fileSize;
+		int numberOfClusters = (int) Math.ceil((double)fileSize / 512);
+		String text = "New File.\r\n";
+		for(int i = 0; i < numberOfClusters; i++){
+			long address = addressList.get(i);
+			while(bytesRemaining % 512 != 0 && bytesRemaining != 0){
+				for(int j = 0; j < text.length(); j++){
+					disk[(int) (address + (bytesRemaining % 512))] = (byte) text.charAt(j);
+				}
+				bytesRemaining--;
+			}
+		}	
+	}
+	
+	public static void adjustFatTable(byte[] disk, long fatAddress, long beginningOfData, ArrayList<Long> addressList, long fileSize){
+		ArrayList<Long> clusterList = new ArrayList<Long>();
+		
+		for(int i = 0; i < addressList.size(); i++){
+			long cluster = (addressList.get(i) -  beginningOfData) / 512;
+			clusterList.add(cluster);
+		}
+		
+		for(int i = 0; i < clusterList.size(); i++){
+			long currentCluster = clusterList.get(i);
+			if(i == clusterList.size() - 1){
+				disk[(int) (fatAddress + (currentCluster * 4))] = (byte) 15;
+				disk[(int) (fatAddress + (currentCluster * 4) + 1)] = (byte) 255;
+				disk[(int) (fatAddress + (currentCluster * 4) + 2)] = (byte) 255;
+				disk[(int) (fatAddress + (currentCluster * 4) + 3)] = (byte) 255;
+			}
+			else{	
+				byte fourthByteOfNextCluster = (byte)((currentCluster & 0xFF000000) >> 24); 
+				byte thirdByteOfNextCluster = (byte)((currentCluster & 0x00FF0000) >> 16);
+				byte secondByteOfNextCluster = (byte) ((currentCluster & 0x0000FF00) >> 8);
+				byte firstByteOfNextCluster = (byte) (currentCluster);
+				disk[(int) (fatAddress + (currentCluster * 4))] = firstByteOfNextCluster;
+				disk[(int) (fatAddress + (currentCluster * 4) + 1)] = secondByteOfNextCluster;
+				disk[(int) (fatAddress + (currentCluster * 4) + 2)] = thirdByteOfNextCluster;
+				disk[(int) (fatAddress + (currentCluster * 4) + 3)] = fourthByteOfNextCluster;
+			}
+		}
+	}
+	
+
 }
 
