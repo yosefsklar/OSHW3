@@ -48,8 +48,6 @@ public class FileSystemUtility {
 		String pwd = "root\\";
 		long fatTable = BPB_RsvdSecCnt * 512;
 		stack.push((int)pwdAddress);
-		System.out.println(getNumberOfFreeClusters(diskImage, fatTable, beginningOfData));
-		System.out.println(getFreeClusters(diskImage, fatTable, beginningOfData, 3));
 
 		//test
 		byte test[] = getNewFileEntry(diskImage,fatTable, (long) beginningOfData, "MYTEST.TXT", 2000);
@@ -120,6 +118,32 @@ public class FileSystemUtility {
 				read(diskImage, pwdAddress, offset, amount, fatTable, beginningOfData,file);
 			} else if(command.equals("volume")) {
 				volume(diskImage);
+			} else if(command.equals("freelist")) {
+				System.out.println(getNumberOfFreeClusters(diskImage, fatTable, beginningOfData));
+				System.out.println(getFreeClusters(diskImage, fatTable, beginningOfData, 3));
+			} else if (command.equals("newfile")) {
+				int fileSize = Integer.parseInt(arr[2]);
+				
+				//this method is going to find where to put the entry. If we need to allocate a new cluster for it,
+				//it will do that and return the first address of the new cluster. Haven't implemented it yet.
+				long newFileEntryAddress = getNewFileEntryAddress(diskImage, fatTable, beginningOfData, pwdAddress);
+				
+				byte[] newFileEntry = getNewFileEntry(diskImage, fatTable, beginningOfData, arr[1], fileSize);
+				
+				ArrayList<Long> clusters = getFreeClusters(diskImage, fatTable, beginningOfData, (fileSize/512) + 1);
+				
+				fillNewFileWithText(diskImage, fatTable, beginningOfData, clusters, fileSize);
+				adjustFatTable(diskImage, fatTable, beginningOfData, clusters);
+				
+				for(int i = 0; i < 32; i++) {
+					diskImage[(int) newFileEntryAddress] = newFileEntry[i];
+				}
+				
+				
+			} else if (command.equals("delete")) {
+				String file = arr[2];
+				delete(diskImage, fatTable, beginningOfData, pwdAddress, FirstSectorOfCluster, file);
+				
 			}
 			
 		}
@@ -529,7 +553,7 @@ public class FileSystemUtility {
 		}	
 	}
 	
-	public static void adjustFatTable(byte[] disk, long fatAddress, long beginningOfData, ArrayList<Long> addressList, long fileSize){
+	public static void adjustFatTable(byte[] disk, long fatAddress, long beginningOfData, ArrayList<Long> addressList){
 		ArrayList<Long> clusterList = new ArrayList<Long>();
 		
 		for(int i = 0; i < addressList.size(); i++){
@@ -556,6 +580,181 @@ public class FileSystemUtility {
 				disk[(int) (fatAddress + (currentCluster * 4) + 3)] = fourthByteOfNextCluster;
 			}
 		}
+	}
+	
+	public static long getNewFileEntryAddress(byte[] disk, long fatAddress, long beginningOfData, long pwd) {
+		long clusterHigh = 0xFFff & ((disk[(int)pwd + 21] << 8) ^ (disk[(int)pwd + 20]));
+		long clusterLow  = 0xFFFF & ((disk[(int)pwd + 27] << 8) ^ (disk[(int)pwd + 26]));
+		long clusterNumber = 0xFFFFFFFF &((clusterHigh << 16) ^ clusterLow); 
+		
+		StringBuilder str = new StringBuilder();
+		for(int i = 0; i < 11; i++) {
+			str.append((char)disk[(int)pwd + i]);
+		}
+		do {
+			for(int j = 0; j < 11; j++) {
+				str.setCharAt(j, (char)disk[(int)pwd + j]);
+			}
+			if(!str.toString().substring(8,9).equals(" ")){
+				str.insert(8, '.');
+			}
+			else{ 
+				str.insert(8, " ");
+			}
+			String name = str.toString().replaceAll(" ", "");
+			if (str.toString().trim().length() == 0) {
+				return pwd;
+			}
+			
+			pwd += 32;
+			if(pwd % 512 == 0) {
+				int fatIndex = (int)fatAddress + (int)(clusterNumber * 4);
+				long temp1 = 0xFFFFFFFF & (disk[(int)fatIndex +3] << 24);
+				long temp2 = 0xFFFFFF & (disk[(int)fatIndex + 2] << 16);
+				long temp3 = 0xFFFF & (disk[(int)fatIndex + 1] << 8);
+				long temp4 = 0xFF & (disk[(int)fatIndex + 0]);
+				clusterNumber = temp1 ^ temp2 ^ temp3 ^ temp4;
+				
+				//we need to allocate a new cluster, and return the address of the starting point of that cluster
+				if (clusterNumber == 0x0FFFFFFF) {
+					ArrayList<Long> freeClusterAddress = getFreeClusters(disk, fatAddress, beginningOfData, 1);
+					int freeClusterNumber = (int) ((freeClusterAddress.get(0) - beginningOfData)/512);
+					//set the old clusterNumber's fat address to the new cluster number
+					//correct for endian-ness (CHECK ME ON THIS)
+					long clusterNumberFour = (freeClusterNumber & 0xFF000000) >> 24;
+					long clusterNumberThree = (freeClusterNumber & 0xFF0000) >> 16;
+					long clusterNumberTwo = (freeClusterNumber & 0xFF00) >> 8;
+					long clusterNumberOne = (freeClusterNumber & 0xFF);
+					disk[(int) (fatAddress + fatIndex)] = (byte) clusterNumberFour;
+					disk[(int) (fatAddress + fatIndex) + 1] = (byte) clusterNumberThree;
+					disk[(int) (fatAddress + fatIndex) + 2] = (byte) clusterNumberTwo;
+					disk[(int) (fatAddress + fatIndex) + 3] = (byte) clusterNumberOne;
+					
+					
+					//and set the new clusterNumber's fat address to 0x0FFFFFFF
+					disk[(int) (fatAddress + freeClusterNumber*4)] = (byte) 0x0F;
+					disk[(int) (fatAddress + freeClusterNumber*4) + 1] = (byte) 0xFF;
+					disk[(int) (fatAddress + freeClusterNumber*4) + 2] = (byte) 0xFF;
+					disk[(int) (fatAddress + freeClusterNumber*4) + 3] = (byte) 0xFF;
+					
+					//the first/only address in the list will be the address we're looking for
+					return freeClusterAddress.get(0);
+				}
+			}
+		} while(true);
+		
+		
+		
+		
+		return 1;
+	}
+	
+	public static void delete(byte[] disk, long fatAddress, long beginningOfData, long pwd, long FirstSectorOfCluster, String fileName) {
+		long clusterHigh = 0xFFff & ((disk[(int)pwd + 21] << 8) ^ (disk[(int)pwd + 20]));
+		long clusterLow  = 0xFFFF & ((disk[(int)pwd + 27] << 8) ^ (disk[(int)pwd + 26]));
+		long clusterNumber = 0xFFFFFFFF &((clusterHigh << 16) ^ clusterLow); 
+		
+		StringBuilder str = new StringBuilder();
+		boolean found = false;
+		for(int i = 0; i < 11; i++) {
+			str.append((char)disk[(int)pwd + i]);
+		}
+		do {
+			for(int j = 0; j < 11; j++) {
+				str.setCharAt(j, (char)disk[(int)pwd + j]);
+			}
+			if(!str.toString().substring(8,9).equals(" ")){
+				str.insert(8, '.');
+			}
+			else{ 
+				str.insert(8, " ");
+			}
+			String name = str.toString().replaceAll(" ", "");
+
+			if(fileName.equals(name)) {
+				found = true;
+				byte attribute_byte = disk[(int)pwd + 11];
+				if((attribute_byte & 0x20) != 0) {
+					
+					clusterHigh = 0xFFff & ((disk[(int)pwd + 21] << 8) ^ (disk[(int)pwd + 20]));
+					clusterLow  = 0xFFFF & ((disk[(int)pwd + 27] << 8) ^ (disk[(int)pwd + 26]));
+					clusterNumber = 0xFFFFFFFF &((clusterHigh << 16) ^ clusterLow); 					
+					long addressOfFile = beginningOfData + (512 * clusterNumber);
+					
+					markAsDeleted(disk, pwd);
+					clearClusters(disk, fatAddress, addressOfFile, clusterNumber, beginningOfData);
+					clearFatTable(disk, clusterNumber, fatAddress);
+					
+					
+					
+				} else {
+					System.out.println("Cannot delete a directory");
+					break;
+				}
+			}
+			str.deleteCharAt(8);
+			pwd += 32;
+			if (pwd % 512 == 0) {
+				int fatIndex = (int)fatAddress + (int)(clusterNumber * 4);
+				long temp1 = 0xFFFFFFFF & (disk[(int)fatIndex +3] << 24);
+				long temp2 = 0xFFFFFF & (disk[(int)fatIndex + 2] << 16);
+				long temp3 = 0xFFFF & (disk[(int)fatIndex + 1] << 8);
+				long temp4 = 0xFF & (disk[(int)fatIndex + 0]);
+				clusterNumber = temp1 ^ temp2 ^ temp3 ^ temp4;
+				pwd = (int)beginningOfData + (int)clusterNumber*512;
+			}
+			
+		} while (str.toString().trim().length() > 0);
+		
+		if(!found) {
+			System.out.println("File does not exist");
+		}
+	}
+	
+	public static void markAsDeleted(byte[] disk, long pwd) {
+		//should be just making disk[pwd] = whatever the marked as deleted is
+		//then we need to make sure ls doesn't list this
+	}
+	
+	public static void clearFatTable(byte[] disk, long clusterNumber, long fatAddress) {
+		long nextCluster;
+		do {
+			//calculate the next cluster number to then clear that in the fat table
+			long addressToClear = fatAddress + clusterNumber*4;
+			long temp1 = 0xFFFFFFFF & (disk[(int)addressToClear +3] << 24);
+			long temp2 = 0xFFFFFF & (disk[(int)addressToClear + 2] << 16);
+			long temp3 = 0xFFFF & (disk[(int)addressToClear + 1] << 8);
+			long temp4 = 0xFF & (disk[(int)addressToClear + 0]);
+			nextCluster = temp1 ^ temp2 ^ temp3 ^ temp4;
+			
+			//clear the current cluster from the fat table
+			for(int i = 0; i < 4; i++) {
+				disk[(int)addressToClear + i] = 0x00;
+			}
+			
+			//set the next cluster number as our current cluster
+			clusterNumber = nextCluster;
+			
+		//if the next cluster isn't the end of data code, then continue	
+		} while (nextCluster != 0x0FFFFFFF);
+	}
+	
+	public static void clearClusters(byte [] disk, long fatAddress, long fileStartAddress, long clusterNumber, long beginningOfData) {
+		do {
+			
+			for(int i = 0; i < 512; i++) {
+				disk[(int)fileStartAddress + i] = 0x00;
+			}
+			int fatIndex = (int)fatAddress + (int)(clusterNumber * 4);
+			long temp1 = 0xFFFFFFFF & (disk[(int)fatIndex +3] << 24);
+			long temp2 = 0xFFFFFF & (disk[(int)fatIndex + 2] << 16);
+			long temp3 = 0xFFFF & (disk[(int)fatIndex + 1] << 8);
+			long temp4 = 0xFF & (disk[(int)fatIndex + 0]);
+			clusterNumber = temp1 ^ temp2 ^ temp3 ^ temp4;
+			
+			fileStartAddress = beginningOfData + (clusterNumber * 512);
+		
+		} while (clusterNumber != 0x0FFFFFFF);
 	}
 	
 
