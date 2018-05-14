@@ -643,10 +643,6 @@ public class FileSystemUtility {
 			}
 		} while(true);
 		
-		
-		
-		
-		return 1;
 	}
 	
 	public static void delete(byte[] disk, long fatAddress, long beginningOfData, long pwd, long FirstSectorOfCluster, String fileName) {
